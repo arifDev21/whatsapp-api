@@ -112,6 +112,12 @@ export async function createSession(
     if (sessions.has(sessionId)) {
       const socket = sessions.get(sessionId)!;
       if (socket.user) {
+        if (webhookUrl) {
+          await Session.update(
+            { webhook_url: webhookUrl },
+            { where: { session_id: sessionId } }
+          ).catch((err) => console.error('[WA] Failed to update webhook_url for active session:', err));
+        }
         return {
           success: true,
           message: 'Session already connected',
@@ -185,6 +191,10 @@ export async function createSession(
 
     // Handle incoming messages
     socket.ev.on('messages.upsert', async (m) => {
+      console.log(`[WA Socket] Received messages.upsert event. Count: ${m.messages.length}`);
+      // Reload session from DB to dynamically catch webhook_url updates
+      await session.reload().catch(() => {});
+
       // Format messages for webhook
       const messages = m.messages.map((msg) => ({
         id: msg.key.id,
@@ -219,6 +229,9 @@ export async function createSession(
 
     // Handle message status updates (sent, delivered, read)
     socket.ev.on('messages.update', async (updates) => {
+      // Reload session from DB to dynamically catch webhook_url updates
+      await session.reload().catch(() => {});
+
       const statusUpdates = updates.map((update) => ({
         id: update.key.id,
         remoteJid: update.key.remoteJid,
@@ -240,6 +253,9 @@ export async function createSession(
 
     // Handle presence updates (online/offline, typing)
     socket.ev.on('presence.update', async (presence) => {
+      // Reload session from DB to dynamically catch webhook_url updates
+      await session.reload().catch(() => {});
+
       if (session.webhook_url) {
         await sendWebhook(session.webhook_url, {
           event: 'presence.update',
@@ -439,11 +455,16 @@ export async function restoreAllSessions(): Promise<void> {
  */
 async function sendWebhook(url: string, data: unknown): Promise<void> {
   try {
-    await fetch(url, {
+    const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
     });
+    if (!res.ok) {
+      console.warn(`[WA] Webhook returned status ${res.status}: ${res.statusText}`);
+    } else {
+      console.log(`[WA] Webhook successfully sent to ${url}`);
+    }
   } catch (error) {
     console.error('[WA] Webhook error:', error);
   }

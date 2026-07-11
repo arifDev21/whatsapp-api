@@ -29,6 +29,7 @@ interface SessionParams {
 interface SendMessageBody {
   to: string;
   message?: string;
+  presence?: 'composing' | 'recording';
   media?: Array<{
     type: 'image' | 'video' | 'document' | 'audio' | 'sticker';
     data: string; // base64 or URL
@@ -383,7 +384,7 @@ export async function sendMessageHandler(
 ): Promise<void> {
   try {
     const { sessionId } = request.params;
-    const { to, message, media } = request.body;
+    const { to, message, media, presence } = request.body;
     const user = request.user!;
 
     // Validate input - need at least message or media
@@ -429,6 +430,13 @@ export async function sendMessageHandler(
 
     // Format phone number
     const jid = to.includes('@') ? to : `${to.replace(/[^0-9]/g, '')}@s.whatsapp.net`;
+
+    // Trigger presence update if requested (e.g. composing / typing status)
+    if (presence) {
+      await socket.sendPresenceUpdate(presence, jid).catch(() => {});
+      // Wait for a realistic typing animation delay (1.5 seconds)
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+    }
 
     const results: Array<{ type: string; messageId?: string }> = [];
 
